@@ -1,0 +1,11 @@
+tensorflow
+flask
+flask-socketio
+flask-cors
+numpy
+pillow
+opencv-python-headless
+python-engineio
+python-socketio
+gunicorn
+eventlet
