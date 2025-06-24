@@ -19,15 +19,8 @@ app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Load the trained teeth health model
-try:
-    model_path = os.path.join(os.path.dirname(__file__), 'final_dental_model.keras')
-    model = load_model(model_path)
-    logger.info("Dental health model loaded successfully")
-except Exception as e:
-    logger.error(f"Failed to load model: {str(e)}")
-    model = None
-
+# Constants
+MODEL_FILENAME = '/model/final_dental_model.keras'
 CLASS_NAMES = ['Healthy Teeth', 'Unhealthy Teeth']
 HEALTH_TIPS = {
     'Healthy Teeth': [
@@ -43,6 +36,36 @@ HEALTH_TIPS = {
         "Avoid acidic foods/drinks"
     ]
 }
+
+# Load the trained teeth health model
+def load_dental_model():
+    """Load the dental health classification model"""
+    try:
+        # Get absolute path to model file
+        model_dir = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(model_dir, MODEL_FILENAME)
+        
+        logger.info(f"Attempting to load model from: {model_path}")
+        
+        # Verify model file exists
+        if not os.path.exists(model_path):
+            raise FileNotFoundError(f"Model file not found at: {model_path}")
+        
+        # Verify file is not empty
+        if os.path.getsize(model_path) == 0:
+            raise ValueError("Model file is empty")
+        
+        # Load the model
+        model = load_model(model_path)
+        logger.info("Dental health model loaded successfully")
+        return model
+        
+    except Exception as e:
+        logger.error(f"Failed to load model: {str(e)}")
+        return None
+
+# Load model at startup
+model = load_dental_model()
 
 def enhance_image_quality(img):
     """Improve image quality for better prediction"""
@@ -162,19 +185,20 @@ def handle_image_frame(data):
         # Prepare response matching frontend expectations
         if result == 'Healthy Teeth':
             response = {
-                'prediction': 'Not Stealing',  # Matching your frontend expectation
+                'prediction': 'Healthy',
                 'confidence': f"{(confidence * 100):.1f}%",
                 'status': 'normal',
-                'message': 'No dental issues detected'
+                'message': 'No dental issues detected',
+                'tips': HEALTH_TIPS['Healthy Teeth']
             }
         else:
             response = {
-                'prediction': 'Cavity',  # Example condition - adjust based on your model
+                'prediction': 'Unhealthy',
                 'confidence': f"{(confidence * 100):.1f}%",
-                'status': 'disease',
-                'disease': 'Potential Cavity',
-                'description': 'Potential dental issue detected. Please consult with a dentist.',
-                'book_doctor': 'Dr. Smith (Cavity Specialist)'
+                'status': 'warning',
+                'condition': 'Potential Dental Issue',
+                'message': 'Potential dental issue detected. Please consult with a dentist.',
+                'tips': HEALTH_TIPS['Unhealthy Teeth']
             }
         
         socketio.emit('classification_result', response, room=request.sid)
@@ -182,6 +206,15 @@ def handle_image_frame(data):
     except Exception as e:
         logger.error(f"Classification error: {str(e)}")
         socketio.emit('classification_error', {'error': str(e)}, room=request.sid)
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'model_loaded': model is not None,
+        'timestamp': datetime.now().isoformat()
+    })
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
