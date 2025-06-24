@@ -21,7 +21,7 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Constants - UPDATED MODEL PATH
 MODEL_DIR = os.path.join(os.path.dirname(__file__), 'model')
-MODEL_PATH = os.path.join(MODEL_DIR, 'final_dental_model.keras')
+MODEL_PATH = os.path.join(MODEL_DIR, 'final_dental_model.h5')
 CLASS_NAMES = ['Healthy Teeth', 'Unhealthy Teeth']
 HEALTH_TIPS = {
     'Healthy Teeth': [
