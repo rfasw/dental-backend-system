@@ -4,7 +4,7 @@ from flask_cors import CORS
 import numpy as np
 import base64
 from tensorflow.keras.models import load_model
-from PIL import Image, ImageOps
+from PIL import Image
 import io
 import os
 import logging
@@ -19,8 +19,9 @@ app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# Constants
-MODEL_FILENAME = '/model/final_dental_model.keras'
+# Constants - UPDATED MODEL PATH
+MODEL_DIR = os.path.join(os.path.dirname(__file__), 'model')
+MODEL_PATH = os.path.join(MODEL_DIR, 'final_dental_model.keras')
 CLASS_NAMES = ['Healthy Teeth', 'Unhealthy Teeth']
 HEALTH_TIPS = {
     'Healthy Teeth': [
@@ -39,53 +40,55 @@ HEALTH_TIPS = {
 
 # Load the trained teeth health model
 def load_dental_model():
-    """Load the dental health classification model"""
+    """Load the dental health classification model with proper error handling"""
     try:
-        # Get absolute path to model file
-        model_dir = os.path.dirname(os.path.abspath(__file__))
-        model_path = os.path.join(model_dir, MODEL_FILENAME)
+        logger.info(f"Loading model from: {MODEL_PATH}")
         
-        logger.info(f"Attempting to load model from: {model_path}")
+        # Create model directory if it doesn't exist
+        os.makedirs(MODEL_DIR, exist_ok=True)
         
         # Verify model file exists
-        if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Model file not found at: {model_path}")
-        
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(f"Model file missing at {MODEL_PATH}")
+            
         # Verify file is not empty
-        if os.path.getsize(model_path) == 0:
+        if os.path.getsize(MODEL_PATH) == 0:
             raise ValueError("Model file is empty")
         
         # Load the model
-        model = load_model(model_path)
+        model = load_model(MODEL_PATH)
         logger.info("Dental health model loaded successfully")
         return model
         
     except Exception as e:
-        logger.error(f"Failed to load model: {str(e)}")
+        logger.critical(f"CRITICAL ERROR: {str(e)}")
+        logger.critical("Shutting down due to model loading failure")
+        # Graceful shutdown for production environments
+        if 'gunicorn' in os.environ.get('SERVER_SOFTWARE', ''):
+            os._exit(1)
         return None
 
 # Load model at startup
 model = load_dental_model()
 
 def enhance_image_quality(img):
-    """Improve image quality for better prediction"""
+    """Improve image quality using CLAHE contrast enhancement"""
     try:
-        # Convert to OpenCV format
-        img_cv = np.array(img)
-        img_cv = img_cv[:, :, ::-1].copy()  # Convert RGB to BGR
+        img_array = np.array(img)
         
-        # Apply image enhancement
-        img_cv = cv2.medianBlur(img_cv, 3)
-        lab = cv2.cvtColor(img_cv, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-        cl = clahe.apply(l)
-        limg = cv2.merge((cl,a,b))
-        enhanced = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
+        # Convert to LAB color space
+        lab = cv2.cvtColor(img_array, cv2.COLOR_RGB2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
         
-        # Convert back to PIL Image
-        enhanced = cv2.cvtColor(enhanced, cv2.COLOR_BGR2RGB)
-        return Image.fromarray(enhanced)
+        # Apply CLAHE to L-channel
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        enhanced_l = clahe.apply(l_channel)
+        
+        # Merge channels and convert back to RGB
+        enhanced_lab = cv2.merge((enhanced_l, a_channel, b_channel))
+        enhanced_rgb = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2RGB)
+        
+        return Image.fromarray(enhanced_rgb)
     except Exception as e:
         logger.error(f"Image enhancement error: {str(e)}")
         return img
@@ -186,7 +189,7 @@ def handle_image_frame(data):
         if result == 'Healthy Teeth':
             response = {
                 'prediction': 'Healthy',
-                'confidence': f"{(confidence * 100):.1f}%",
+                'confidence': f"{(1 - confidence) * 100:.1f}%",
                 'status': 'normal',
                 'message': 'No dental issues detected',
                 'tips': HEALTH_TIPS['Healthy Teeth']
@@ -209,12 +212,13 @@ def handle_image_frame(data):
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with model status"""
+    status_code = 200 if model else 503
     return jsonify({
-        'status': 'healthy',
-        'model_loaded': model is not None,
+        'status': 'up' if model else 'down',
+        'model_loaded': bool(model),
         'timestamp': datetime.now().isoformat()
-    })
+    }), status_code
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
